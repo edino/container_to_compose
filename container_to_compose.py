@@ -1,33 +1,41 @@
-# Container to Compose: A Python script by Edino De Souza with help from ChatGPT.
+# Copyright Header Starts Here.
+#
+#
+# Container to Compose: A Python script for generating Docker Compose files for active containers.
 # Copyright © 2024 Edino De Souza
 # Author: Edino De Souza
 # Repository: https://github.com/edino/container_to_compose
 # License: GNU General Public License v3.0 - https://github.com/edino/container_to_compose/blob/main/LICENSE
 # This file is part of Container to Compose.
-
+#
+#
 # Script Summary Section
 # Summary: This script automates the generation of Docker Compose files for active containers in a Docker environment.
-# It meticulously extracts crucial details such as container configurations and volume information for each running container.
-# The script ensures clarity and convenience by creating distinct Docker Compose files tailored to the unique characteristics of each container.
-# By seamlessly integrating with Docker, the script streamlines the process of capturing container intricacies and encapsulates them in organized and deployable Docker Compose configurations.
+# It extracts container configurations and volume information, creating distinct Docker Compose files for each running container.
+# The script integrates with Docker, streamlining the process of capturing container intricacies in organized and deployable Docker Compose configurations.
 # The generated files empower users to replicate and manage containerized environments effortlessly.
-
+#
+#
 # Requirements Section
 # Requirements:
 #   - Python 3
 # Ensure Python 3 is installed before running the script.
-# sudo apt install python3 -y
-
+# On Debian-based systems: sudo apt install python3 -y
+#
+#
 #   - Docker Python library
 # Install the Docker Python library using: pip3 install docker
-# sudo pip3 install docker
-
+# On Debian-based systems: sudo pip3 install docker
+#
+#
 #   - PyYAML library
 # Install the PyYAML library using: pip3 install pyyaml
-# sudo pip3 install pyyaml
-
-# BuildDate: 1:37 PM EST 2024-01-21 - Working.
-
+# On Debian-based systems: sudo pip3 install pyyaml
+#
+#
+# Build Date: 09:27 AM EST 2024-01-22 - Working.
+#
+#
 # Execution Section
 # Execution Instructions:
 # 1. Download the script using:
@@ -36,293 +44,211 @@
 #    sudo python3 /tmp/container_to_compose.py
 # or
 #    curl -s https://raw.githubusercontent.com/edino/container_to_compose/main/container_to_compose.py | python3 -
-
+#
+# Tested on: Ubuntu 20.04 LTS with Python 3.8.5 and Docker version 20.10.5
+#
+# Copyright Header Ends Here.
+#
+#
+#
+#
+# Source Code Starts Here
+#
+#
 import docker
 import os
 import logging
 from datetime import datetime, timezone
 import yaml
-import ipaddress
+import signal  # Added signal module
 
-def ensure_valid_writable_path(prompt="Enter an absolute folder path (e.g., /path/to/folder, press Enter to use the current folder): "):
-    """
-    Ensure the provided path is valid and writable, creating it if necessary.
-    """
-    while True:
-        user_input_path = input(prompt)
-        if not user_input_path:
-            user_input_path = os.getcwd()
+def configure_logging(log_file_path):
+    logging.basicConfig(
+        filename=log_file_path,
+        level=logging.DEBUG,  # Changed to DEBUG level for verbose mode
+        format="%(asctime)s [%(levelname)s]: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S %Z"  # Include timezone in the timestamp
+    )
 
-        if not os.path.isabs(user_input_path):
-            print("Error: Please provide an absolute path.")
-            continue
-
-        user_path = os.path.expanduser(user_input_path)
-
-        if os.path.exists(user_path):
-            if os.access(user_path, os.W_OK):
-                print("Path already exists, and user has write access.")
-                return user_path
-            else:
-                print("Error: User does not have write access to the existing path.")
-                return None
-
-        try:
-            os.makedirs(user_path)
-            print("Path created successfully.")
-            return user_path
-        except OSError as e:
-            print(f"Error creating the path: {str(e)}")
-            return None
-
-def generate_docker_compose(container_info, user_network_info, container_execution_path, is_original=True):
-    """
-    Generate Docker Compose file for a single container.
-    """
-    sanitized_container_name = container_info.get('Name', '').lstrip('/').replace("-", "_").replace(".", "_")
-    service_name = f"service_{sanitized_container_name}"
-    container_config = container_info.get('Config', {})
-    volumes = container_info.get('Mounts', [])
-    healthcheck_info = container_config.get('Healthcheck', "")
-
-    user_network = ipaddress.IPv4Network(user_network_info['network_address'], strict=False)
-    container_ip = str(user_network.network_address + 1)
-
-    docker_compose_template = {
-        'version': '3.8',
-        'services': {
-            service_name: {
-                'image': container_config.get('Image', ''),
-                'container_name': service_name,
-                'hostname': container_config.get('Hostname', ''),
-                'domainname': container_config.get('Domainname', ''),
-                'user': container_config.get('User', ''),
-                'tty': container_config.get('Tty', ''),
-                'attach_stdin': container_config.get('AttachStdin', ''),
-                'attach_stdout': container_config.get('AttachStdout', ''),
-                'attach_stderr': container_config.get('AttachStderr', ''),
-                'expose': [port.split("/")[0] for port in container_config.get('ExposedPorts', [])],
-                'stdin_once': container_config.get('StdinOnce', ''),
-                'environment': container_config.get('Env', []),
-                'healthcheck': {
-                    'test': healthcheck_info.get('Test', []),
-                    'interval': healthcheck_info.get('Interval', 0),
-                    'timeout': healthcheck_info.get('Timeout', 0),
-                    'retries': healthcheck_info.get('Retries', 0)
-                },
-                'volumes': [f"{mount.get('Source', '')}:{mount.get('Destination', '')}:{mount.get('Mode', '')}" for mount in volumes],
-                'ports': [f'{port.split("/")[0]}:{port.split("/")[1]}' for port in container_config.get('ExposedPorts', [])],
-                'networks': {
-                    'my_network': {
-                        'ipv4_address': container_ip  # Use the generated container IP address
-                    }
-                },
-                'depends_on': container_config.get('HostConfig', {}).get('Links', []),
-                'command': container_config.get('Cmd', ''),
-                'logging': {
-                    'driver': container_config.get('LogConfig', {}).get('Type', ''),
-                    'options': container_config.get('LogConfig', {}).get('Config', {})
-                },
-                'labels': container_config.get('Config', {}).get('Labels', {}),
-                'deploy': {
-                    'replicas': container_config.get('Replica', ''),
-                    'update_config': {
-                        'parallelism': container_config.get('UpdateConfig', {}).get('Parallelism', ''),
-                        'delay': container_config.get('UpdateConfig', {}).get('Delay', '')
-                    },
-                    'restart_policy': {
-                        'condition': container_config.get('HostConfig', {}).get('RestartPolicy', {}).get('Name', '')
-                    }
-                }
-            }
-        },
-        'networks': {
-            'my_network': {
-                'driver': 'bridge',
-                'ipam': {
-                    'config': [
-                        {
-                            'subnet': user_network_info['network_address'],
-                            'ip_range': user_network_info['ip_address_cidr'],
-                            'gateway': user_network_info['network_address'].split('/')[0],
-                            'aux_addresses': {'my_gateway': user_network_info['network_address'].split('/')[0]}
-                        }
-                    ]
-                },
-                'name': user_network_info['network_name']
-            }
-        },
-        'volumes': {}
-    }
-
-    # Add volume information to the docker compose file
-    for volume in volumes:
-        volume_name = volume.get('Source', '').replace("-", "_").replace(".", "_")
-        docker_compose_template['volumes'][volume_name] = {}
-
-    # Set the container execution path for all services
-    docker_compose_template['services'][service_name]['container_execution_path'] = os.path.join(container_execution_path, sanitized_container_name)
-
-    # Save the generated Docker Compose file
-    file_type = "original" if is_original else "adapted"
-    filename = f"{sanitized_container_name}_{file_type}_docker_compose.yml"
-    with open(os.path.join(directory_path, filename), 'w') as file:
-        yaml.dump(docker_compose_template, file)
-
-    logging.info(f"Docker Compose file '{filename}' generated successfully.")
-
-def generate_stack_docker_compose(containers_info, user_network_info, container_execution_path):
-    stack_docker_compose_template = {
-        'version': '3.8',
-        'services': {},
-        'networks': {
-            'my_network': {
-                'driver': 'bridge',
-                'ipam': {
-                    'config': [
-                        {
-                            'subnet': user_network_info['network_address'],
-                            'ip_range': user_network_info['ip_address_cidr'],
-                            'gateway': user_network_info['network_address'].split('/')[0],
-                            'aux_addresses': {'my_gateway': user_network_info['network_address'].split('/')[0]}
-                        }
-                    ]
-                },
-                'name': user_network_info['network_name']
-            }
-        },
-        'volumes': {}
-    }
-
-    for container_info in containers_info:
-        sanitized_container_name = container_info.get('Name', '').lstrip('/').replace("-", "_").replace(".", "_")
-        file_type = "adapted"
-        service_name = f"service_{sanitized_container_name}"
-
-        # Add service information to the stack docker compose file
-        stack_docker_compose_template['services'][service_name] = {
-            'image': container_info.get('Config', {}).get('Image', ''),
-            'container_name': service_name,
-            'hostname': container_info.get('Config', {}).get('Hostname', ''),
-            'domainname': container_info.get('Config', {}).get('Domainname', ''),
-            'user': container_info.get('Config', {}).get('User', ''),
-            'tty': container_info.get('Config', {}).get('Tty', ''),
-            'attach_stdin': container_info.get('Config', {}).get('AttachStdin', ''),
-            'attach_stdout': container_info.get('Config', {}).get('AttachStdout', ''),
-            'attach_stderr': container_info.get('Config', {}).get('AttachStderr', ''),
-            'expose': [port.split("/")[0] for port in container_info.get('Config', {}).get('ExposedPorts', [])],
-            'stdin_once': container_info.get('Config', {}).get('StdinOnce', ''),
-            'environment': container_info.get('Config', {}).get('Env', []),
-            'healthcheck': {
-                'test': container_info.get('Config', {}).get('Healthcheck', {}).get('Test', []),
-                'interval': container_info.get('Config', {}).get('Healthcheck', {}).get('Interval', 0),
-                'timeout': container_info.get('Config', {}).get('Healthcheck', {}).get('Timeout', 0),
-                'retries': container_info.get('Config', {}).get('Healthcheck', {}).get('Retries', 0)
-            },
-            'volumes': [f"{mount.get('Source', '')}:{mount.get('Destination', '')}:{mount.get('Mode', '')}" for mount in container_info.get('Mounts', [])]
-        }
-
-        # Add volume information to the stack docker compose file
-        volumes = container_info.get('Mounts', [])
-        for volume in volumes:
-            volume_name = volume.get('Source', '').replace("-", "_").replace(".", "_")
-            stack_docker_compose_template['volumes'][volume_name] = {}
-
-        # Set the container execution path for all services in the stack
-        stack_docker_compose_template['services'][service_name]['container_execution_path'] = os.path.join(container_execution_path, sanitized_container_name)
-
-    # Save the generated Stack Docker Compose file
-    stack_filename = f"my_docker_stack_{datetime.now(timezone.utc).strftime('%Y-%m-%d_%H-%M-%S_%Z')}.yml"
-    with open(os.path.join(directory_path, stack_filename), 'w') as file:
-        yaml.dump(stack_docker_compose_template, file)
-
-    logging.info(f"Stack Docker Compose file '{stack_filename}' generated successfully.")
-
-def main():
-    global directory_path
-
-    # Set up logging
-    log_file_path = os.path.join(os.getcwd(), 'docker_compose_generator.log')
-    logging.basicConfig(filename=log_file_path, level=logging.DEBUG, format='%(asctime)s [%(levelname)s]: %(message)s', datefmt='%Y-%m-%d %H:%M:%S %Z')
-    
-    # Adding console handler for VERBOSE level
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)  # Set to INFO for VERBOSE
-    console_handler.setFormatter(logging.Formatter('%(message)s'))
-    logging.getLogger().addHandler(console_handler)
-
-    logging.info("Script execution started.")
-
+def check_yaml_syntax(yaml_content):
     try:
-        # Log current system timestamp and timezone
-        current_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
-        logging.info(f"Current system timestamp: {current_timestamp}")
+        yaml.safe_load(yaml_content)
+        return {"status": "success", "errors": []}
+    except yaml.YAMLError as e:
+        return {"status": "error", "errors": [str(e)]}
 
-        # Ask the user for the Docker Compose Files Saved Path
-        directory_path = ensure_valid_writable_path("Enter the Docker Compose Files Saved Path (press Enter to use the current folder): ")
+def format_container_config(container_config):
+    return "\n".join(f"      {key}: {value}" for key, value in container_config.items())
 
-        # Ask the user for the Docker Composed Files Saved Path
-        container_execution_path = ensure_valid_writable_path("Enter the Container Execution Path for non-original Docker Compose files (e.g., /mnt/rpi4mediaplayer/Docker/Apps, press Enter to skip): ")
+def format_mounts(mounts):
+    return "\n".join(f"      - {mount['Source']}:{mount['Destination']}:{mount['Mode']}" for mount in mounts)
 
-        # Ask the user for network information
-        user_network_info = {
-            'network_address': input("Enter the Network Address in CIDR format (e.g., 192.168.0.0/24, press Enter to skip): "),
-            'ip_address_cidr': input("Enter the IP Address in CIDR format (e.g., 192.168.0.1/24, press Enter to skip): "),
-            'network_name': input("Enter the Network Name (press Enter to skip): "),
-            'dns_server': input("Enter the DNS Server in CIDR format (e.g., 192.168.0.1/24, press Enter to skip): ")
-        }
+def validate_and_log_yaml(file_path, log_file_path):
+    try:
+        with open(file_path, "r") as file:
+            yaml_content = file.read()
+    except FileNotFoundError:
+        logging.error(f"Error: File not found - {file_path}")
+        return
 
-        # Validate and assign default values if necessary
-        user_network_info['network_address'] = user_network_info.get('network_address', '192.168.0.0/24')
-        user_network_info['ip_address_cidr'] = user_network_info.get('ip_address_cidr', '192.168.0.1/24')
-        user_network_info['network_name'] = user_network_info.get('network_name', 'my_network')
-        user_network_info['dns_server'] = user_network_info.get('dns_server', '192.168.0.1/24')
+    result = check_yaml_syntax(yaml_content)
 
-        # Validate the CIDR formats
-        try:
-            ipaddress.IPv4Network(user_network_info['network_address'], strict=False)
-            ipaddress.IPv4Network(user_network_info['ip_address_cidr'], strict=False)
-        except ValueError:
-            print("Error: Invalid CIDR format. Please provide a valid CIDR format.")
-            return
+    logging.info(f"YAML Syntax check result for {file_path}:")
+    logging.info(f"Status: {result['status']}")
 
-        # Get Docker client
-        client = docker.from_env()
+    if result['status'] == 'error':
+        logging.info("Errors:")
+        for error in result['errors']:
+            logging.info(f"  - {error}")
+        raise ValueError(f"YAML Syntax check failed for {file_path}")
 
-        # Get the list of active containers
-        containers_info = [container.attrs for container in client.containers.list()]
-
-        # Check if there are active containers
-        if not containers_info:
-            print("No active containers found. Exiting.")
-            return
-
-        # Generate Docker Compose files for each container
-        for i, container_info in enumerate(containers_info):
-            is_original = i == 0  # Only the first container is considered as the original
-            generate_docker_compose(container_info, user_network_info, container_execution_path, is_original)
-
-        # Generate Stack Docker Compose file
-        generate_stack_docker_compose(containers_info, user_network_info, container_execution_path)
-
-        logging.info("Script execution completed successfully.")
-
-    except KeyboardInterrupt:
-        logging.info("Script terminated by the user.")
-        print("\nScript terminated by the user.")
-
-    except Exception as e:
-        logging.error(f"An error occurred: {str(e)}")
-        print(f"An error occurred: {str(e)}")
-
-    finally:
-        # Display logs since the last execution started message
-        with open(log_file_path, 'r') as log_file:
-            logs = log_file.read().split("Script execution started\n")[1:]
-            if logs:
-                print("\n".join(logs))
-
-        print(f"\nLogs are saved in: {log_file_path}")
+def get_network_info(networks):
+    network_info = networks.get('my_network', {})
+    container_ip = network_info.get('IPAddress', '')
+    dns_server = network_info.get('IPAMConfig', {}).get('AuxiliaryAddresses', {}).get('my_gateway', '')
+    return container_ip, dns_server
 
 if __name__ == "__main__":
-    main()
+    current_directory = os.getcwd()
+    script_path = os.path.join(current_directory, "container_to_compose.py")
+    log_file_path = os.path.join(current_directory, "container_to_compose_log.log")
+    compose_file_extension = "_docker-compose.yml"
+
+    def format_ports(ports):
+        return "\n      - ".join(ports)
+
+    try:
+        # Initialize logging
+        configure_logging(log_file_path)
+        logging.info(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [INFO]: Script execution started")
+
+        # Handle KeyboardInterrupt
+        interrupted = [False]  # Use a list to store a mutable object
+        def signal_handler(sig, frame):
+            interrupted[0] = True
+            logging.info(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [INFO]: Script execution interrupted by user")
+        
+        signal.signal(signal.SIGINT, signal_handler)
+
+        client = docker.from_env()
+        containers = client.containers.list()
+
+        for container in containers:
+            # Handle user interruption
+            if interrupted[0]:
+                break
+
+            container_info = container.attrs
+            container_config = container_info['Config']
+            host_config = container_info['HostConfig']
+            deploy_config = container_config.get('Deploy', {})
+
+            # Extracting necessary information for the Docker Compose template
+            container_name = container_info['Name'].lstrip('/').replace("-", "_").replace(".", "_")
+            image = container_config['Image']
+            hostname = container_config.get('Hostname', '')
+            domainname = container_config.get('Domainname', '')
+            user = container_config.get('User', '')
+            tty = container_config.get('Tty', False)
+            attach_stdin = container_config.get('AttachStdin', False)
+            attach_stdout = container_config.get('AttachStdout', False)
+            attach_stderr = container_config.get('AttachStderr', False)
+            exposed_ports = list(container_config.get('ExposedPorts', {}).keys())
+            stdin_once = container_config.get('StdinOnce', False)
+            env = container_config.get('Env', [])
+            healthcheck = container_config.get('Healthcheck', {})
+            mounts = container_info.get('Mounts', [])
+            ports = [f'"{port}"' for port in container_config.get('Ports', [])]
+            networks = container_config.get('NetworkSettings', {}).get('Networks', {})
+            depends_on = host_config.get('Links', [])
+            command = container_config.get('Cmd', [])
+            log_driver = host_config.get('LogConfig', {}).get('Type', '')
+            log_options = host_config.get('LogConfig', {}).get('Config', {})
+            labels = container_config.get('Labels', {})
+            replicas = deploy_config.get('Replicas', 1)
+            update_config = deploy_config.get('UpdateConfig', {})
+            restart_policy = host_config.get('RestartPolicy', {}).get('Name', '')
+            container_ip, dns_server = get_network_info(networks)
+
+            # Build Docker Compose content
+            compose_content = f"""\
+version: '3.8'
+services:
+  {container_name}:
+    image: {image}
+    container_name: {container_name}
+    hostname: {hostname}
+    domainname: {domainname}
+    user: {user}
+    tty: {tty}
+    attach_stdin: {attach_stdin}
+    attach_stdout: {attach_stdout}
+    attach_stderr: {attach_stderr}
+    ExposedPorts: {exposed_ports}
+    stdin_once: {stdin_once}
+    env: {env}
+    healthcheck:
+      test: {healthcheck.get('Test', [])}
+      interval: {healthcheck.get('Interval', '')}
+      timeout: {healthcheck.get('Timeout', '')}
+      retries: {healthcheck.get('Retries', '')}
+    volumes:
+{format_mounts(mounts)}
+    ports: 
+      - {format_ports(ports)}
+    environment: {env}
+    networks:
+      my_network:
+        ipv4_address: {container_ip}
+    depends_on: {depends_on}
+    command: {command}
+    logging:
+      driver: {log_driver}
+      options: {log_options}
+    labels: {labels}
+    deploy:
+      replicas: {replicas}
+      update_config:
+        parallelism: {update_config.get('Parallelism', 1)}
+        delay: {update_config.get('Delay', '10s')}
+      restart_policy:
+        condition: {restart_policy}
+    container_ip: {container_ip}
+    dns_server: {dns_server}
+"""
+
+            # Validate YAML syntax of the generated Docker Compose file
+            compose_file_path = os.path.join(current_directory, f'{container_name}{compose_file_extension}')
+            with open(compose_file_path, 'w') as compose_file:
+                compose_file.write(compose_content)
+                validate_and_log_yaml(compose_file_path, log_file_path)
+
+            logging.info(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [INFO]: Docker Compose generated for container {container_name}")
+            logging.info(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [INFO]: Saved to {compose_file_path}")
+
+        if interrupted[0]:
+            logging.info(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [INFO]: Script execution terminated by user")
+
+        logging.info(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [INFO]: Script execution completed successfully")
+
+        # Display the logged information from the last execution to the user
+        with open(log_file_path, 'r') as log_file:
+            log_lines = log_file.readlines()
+            start_index = [i for i, line in enumerate(log_lines) if "Script execution started" in line][-1]
+            print("\nLogged Information:\n" + ''.join(log_lines[start_index:]))
+
+    except docker.errors.APIError as e:
+        logging.error(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [ERROR]: Error during Docker API call: {str(e)}")
+    except ValueError as ve:
+        logging.error(str(ve))
+    except Exception as e:
+        logging.error(f"{datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} [ERROR]: Unexpected error: {str(e)}")
+    finally:
+        # Display the log file path
+        print(f"\nLog file is saved at: {log_file_path}")
+
+#
+#
+# Source Code Ends Here
+#
+#
